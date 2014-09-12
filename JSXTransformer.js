@@ -1,5 +1,5 @@
 /**
- * JSXTransformer v0.11.1
+ * JSXTransformer v0.12.0-alpha
  */
 !function(e){if("object"==typeof exports&&"undefined"!=typeof module)module.exports=e();else if("function"==typeof define&&define.amd)define([],e);else{var f;"undefined"!=typeof window?f=window:"undefined"!=typeof global?f=global:"undefined"!=typeof self&&(f=self),f.JSXTransformer=e()}}(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(_dereq_,module,exports){
 /*!
@@ -18,22 +18,35 @@ exports.INSPECT_MAX_BYTES = 50
 Buffer.poolSize = 8192
 
 /**
- * If `Buffer._useTypedArrays`:
+ * If `TYPED_ARRAY_SUPPORT`:
  *   === true    Use Uint8Array implementation (fastest)
- *   === false   Use Object implementation (compatible down to IE6)
+ *   === false   Use Object implementation (most compatible, even IE6)
+ *
+ * Browsers that support typed arrays are IE 10+, Firefox 4+, Chrome 7+, Safari 5.1+,
+ * Opera 11.6+, iOS 4.2+.
+ *
+ * Note:
+ *
+ * - Implementation must support adding new properties to `Uint8Array` instances.
+ *   Firefox 4-29 lacked support, fixed in Firefox 30+.
+ *   See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
+ *
+ *  - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
+ *
+ *  - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
+ *    incorrect length in some situations.
+ *
+ * We detect these buggy browsers and set `TYPED_ARRAY_SUPPORT` to `false` so they will
+ * get the Object implementation, which is slower but will work correctly.
  */
-Buffer._useTypedArrays = (function () {
-  // Detect if browser supports Typed Arrays. Supported browsers are IE 10+, Firefox 4+,
-  // Chrome 7+, Safari 5.1+, Opera 11.6+, iOS 4.2+. If the browser does not support adding
-  // properties to `Uint8Array` instances, then that's the same as no `Uint8Array` support
-  // because we need to be able to add all the node Buffer API methods. This is an issue
-  // in Firefox 4-29. Now fixed: https://bugzilla.mozilla.org/show_bug.cgi?id=695438
+var TYPED_ARRAY_SUPPORT = (function () {
   try {
     var buf = new ArrayBuffer(0)
     var arr = new Uint8Array(buf)
     arr.foo = function () { return 42 }
-    return 42 === arr.foo() &&
-        typeof arr.subarray === 'function' // Chrome 9-10 lack `subarray`
+    return 42 === arr.foo() && // typed array instances can be augmented
+        typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
+        new Uint8Array(1).subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
   } catch (e) {
     return false
   }
@@ -66,14 +79,14 @@ function Buffer (subject, encoding, noZero) {
       subject = base64clean(subject)
     length = Buffer.byteLength(subject, encoding)
   } else if (type === 'object' && subject !== null) { // assume object is array-like
-    if (subject.type === 'Buffer' && Array.isArray(subject.data))
+    if (subject.type === 'Buffer' && isArray(subject.data))
       subject = subject.data
     length = +subject.length > 0 ? Math.floor(+subject.length) : 0
   } else
     throw new Error('First argument needs to be a number, array or string.')
 
   var buf
-  if (Buffer._useTypedArrays) {
+  if (TYPED_ARRAY_SUPPORT) {
     // Preferred: Return an augmented `Uint8Array` instance for best performance
     buf = Buffer._augment(new Uint8Array(length))
   } else {
@@ -84,7 +97,7 @@ function Buffer (subject, encoding, noZero) {
   }
 
   var i
-  if (Buffer._useTypedArrays && typeof subject.byteLength === 'number') {
+  if (TYPED_ARRAY_SUPPORT && typeof subject.byteLength === 'number') {
     // Speed optimization -- use set if we're copying from a typed array
     buf._set(subject)
   } else if (isArrayish(subject)) {
@@ -98,7 +111,7 @@ function Buffer (subject, encoding, noZero) {
     }
   } else if (type === 'string') {
     buf.write(subject, 0, encoding)
-  } else if (type === 'number' && !Buffer._useTypedArrays && !noZero) {
+  } else if (type === 'number' && !TYPED_ARRAY_SUPPORT && !noZero) {
     for (i = 0; i < length; i++) {
       buf[i] = 0
     }
@@ -405,7 +418,7 @@ Buffer.prototype.copy = function (target, target_start, start, end) {
 
   var len = end - start
 
-  if (len < 100 || !Buffer._useTypedArrays) {
+  if (len < 100 || !TYPED_ARRAY_SUPPORT) {
     for (var i = 0; i < len; i++) {
       target[i + target_start] = this[i + start]
     }
@@ -499,7 +512,7 @@ Buffer.prototype.slice = function (start, end) {
   if (end < start)
     end = start
 
-  if (Buffer._useTypedArrays) {
+  if (TYPED_ARRAY_SUPPORT) {
     return Buffer._augment(this.subarray(start, end))
   } else {
     var sliceLen = end - start
@@ -958,7 +971,7 @@ Buffer.prototype.inspect = function () {
  */
 Buffer.prototype.toArrayBuffer = function () {
   if (typeof Uint8Array !== 'undefined') {
-    if (Buffer._useTypedArrays) {
+    if (TYPED_ARRAY_SUPPORT) {
       return (new Buffer(this)).buffer
     } else {
       var buf = new Uint8Array(this.length)
@@ -7997,6 +8010,8 @@ var Base62 = (function (my) {
 
 module.exports = Base62
 },{}],8:[function(_dereq_,module,exports){
+module.exports=_dereq_(6)
+},{}],9:[function(_dereq_,module,exports){
 /*
  * Copyright 2009-2011 Mozilla Foundation and contributors
  * Licensed under the New BSD license. See LICENSE.txt or:
@@ -8006,7 +8021,7 @@ exports.SourceMapGenerator = _dereq_('./source-map/source-map-generator').Source
 exports.SourceMapConsumer = _dereq_('./source-map/source-map-consumer').SourceMapConsumer;
 exports.SourceNode = _dereq_('./source-map/source-node').SourceNode;
 
-},{"./source-map/source-map-consumer":13,"./source-map/source-map-generator":14,"./source-map/source-node":15}],9:[function(_dereq_,module,exports){
+},{"./source-map/source-map-consumer":14,"./source-map/source-map-generator":15,"./source-map/source-node":16}],10:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -8105,7 +8120,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"./util":16,"amdefine":17}],10:[function(_dereq_,module,exports){
+},{"./util":17,"amdefine":18}],11:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -8251,7 +8266,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"./base64":11,"amdefine":17}],11:[function(_dereq_,module,exports){
+},{"./base64":12,"amdefine":18}],12:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -8295,7 +8310,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"amdefine":17}],12:[function(_dereq_,module,exports){
+},{"amdefine":18}],13:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -8378,7 +8393,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"amdefine":17}],13:[function(_dereq_,module,exports){
+},{"amdefine":18}],14:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -8857,7 +8872,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"./array-set":9,"./base64-vlq":10,"./binary-search":12,"./util":16,"amdefine":17}],14:[function(_dereq_,module,exports){
+},{"./array-set":10,"./base64-vlq":11,"./binary-search":13,"./util":17,"amdefine":18}],15:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -9239,7 +9254,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"./array-set":9,"./base64-vlq":10,"./util":16,"amdefine":17}],15:[function(_dereq_,module,exports){
+},{"./array-set":10,"./base64-vlq":11,"./util":17,"amdefine":18}],16:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -9612,7 +9627,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"./source-map-generator":14,"./util":16,"amdefine":17}],16:[function(_dereq_,module,exports){
+},{"./source-map-generator":15,"./util":17,"amdefine":18}],17:[function(_dereq_,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -9819,7 +9834,7 @@ define(function (_dereq_, exports, module) {
 
 });
 
-},{"amdefine":17}],17:[function(_dereq_,module,exports){
+},{"amdefine":18}],18:[function(_dereq_,module,exports){
 (function (process,__filename){
 /** vim: et:ts=4:sw=4:sts=4
  * @license amdefine 0.1.0 Copyright (c) 2011, The Dojo Foundation All Rights Reserved.
@@ -10122,7 +10137,7 @@ function amdefine(module, requireFn) {
 module.exports = amdefine;
 
 }).call(this,_dereq_("FWaASH"),"/../node_modules/jstransform/node_modules/source-map/node_modules/amdefine/amdefine.js")
-},{"FWaASH":5,"path":4}],18:[function(_dereq_,module,exports){
+},{"FWaASH":5,"path":4}],19:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -10210,7 +10225,7 @@ exports.extract = extract;
 exports.parse = parse;
 exports.parseAsObject = parseAsObject;
 
-},{}],19:[function(_dereq_,module,exports){
+},{}],20:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -10465,7 +10480,7 @@ function transform(visitors, source, options) {
 
 exports.transform = transform;
 
-},{"./utils":20,"esprima-fb":6,"source-map":8}],20:[function(_dereq_,module,exports){
+},{"./utils":21,"esprima-fb":8,"source-map":9}],21:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -11072,7 +11087,7 @@ exports.analyzeAndTraverse = analyzeAndTraverse;
 exports.getOrderedChildren = getOrderedChildren;
 exports.getNodeSourceText = getNodeSourceText;
 
-},{"./docblock":18,"esprima-fb":6}],21:[function(_dereq_,module,exports){
+},{"./docblock":19,"esprima-fb":8}],22:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -11225,7 +11240,7 @@ exports.visitorList = [
 ];
 
 
-},{"../src/utils":20,"./es6-destructuring-visitors":23,"./es6-rest-param-visitors":26,"esprima-fb":6}],22:[function(_dereq_,module,exports){
+},{"../src/utils":21,"./es6-destructuring-visitors":24,"./es6-rest-param-visitors":27,"esprima-fb":8}],23:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -11767,7 +11782,7 @@ exports.visitorList = [
   visitSuperMemberExpression
 ];
 
-},{"../src/utils":20,"base62":7,"esprima-fb":6}],23:[function(_dereq_,module,exports){
+},{"../src/utils":21,"base62":7,"esprima-fb":8}],24:[function(_dereq_,module,exports){
 /**
  * Copyright 2014 Facebook, Inc.
  *
@@ -11811,6 +11826,7 @@ var Syntax = _dereq_('esprima-fb').Syntax;
 var utils = _dereq_('../src/utils');
 
 var restParamVisitors = _dereq_('./es6-rest-param-visitors');
+var restPropertyHelpers = _dereq_('./es7-rest-property-helpers');
 
 // -------------------------------------------------------
 // 1. Structured variable declarations.
@@ -11855,6 +11871,26 @@ function getDestructuredComponents(node, state) {
       continue;
     }
 
+    if (item.type === Syntax.SpreadElement) {
+      // Spread/rest of an array.
+      // TODO(dmitrys): support spread in the middle of a pattern
+      // and also for function param patterns: [x, ...xs, y]
+      components.push(item.argument.name +
+        '=Array.prototype.slice.call(' +
+        getTmpVar(tmpIndex) + ',' + idx + ')'
+      );
+      continue;
+    }
+
+    if (item.type === Syntax.SpreadProperty) {
+      var restExpression = restPropertyHelpers.renderRestExpression(
+        getTmpVar(tmpIndex),
+        patternItems
+      );
+      components.push(item.argument.name + '=' + restExpression);
+      continue;
+    }
+
     // Depending on pattern type (Array or Object), we get
     // corresponding pattern item parts.
     var accessor = getPatternItemAccessor(node, item, tmpIndex, idx);
@@ -11864,14 +11900,6 @@ function getDestructuredComponents(node, state) {
     if (value.type === Syntax.Identifier) {
       // Simple pattern item.
       components.push(value.name + '=' + accessor);
-    } else if (value.type === Syntax.SpreadElement) {
-      // Spread/rest of an array.
-      // TODO(dmitrys): support spread in the middle of a pattern
-      // and also for function param patterns: [x, ...xs, y]
-      components.push(value.argument.name +
-        '=Array.prototype.slice.call(' +
-        getTmpVar(tmpIndex) + ',' + idx + ')'
-      );
     } else {
       // Complex sub-structure.
       components.push(
@@ -12035,7 +12063,7 @@ exports.visitorList = [
 exports.renderDestructuredComponents = renderDestructuredComponents;
 
 
-},{"../src/utils":20,"./es6-rest-param-visitors":26,"esprima-fb":6}],24:[function(_dereq_,module,exports){
+},{"../src/utils":21,"./es6-rest-param-visitors":27,"./es7-rest-property-helpers":29,"esprima-fb":8}],25:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -12089,7 +12117,7 @@ exports.visitorList = [
   visitObjectConciseMethod
 ];
 
-},{"../src/utils":20,"esprima-fb":6}],25:[function(_dereq_,module,exports){
+},{"../src/utils":21,"esprima-fb":8}],26:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -12144,7 +12172,7 @@ exports.visitorList = [
 ];
 
 
-},{"../src/utils":20,"esprima-fb":6}],26:[function(_dereq_,module,exports){
+},{"../src/utils":21,"esprima-fb":8}],27:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -12243,7 +12271,7 @@ exports.visitorList = [
   visitFunctionBodyWithRestParam
 ];
 
-},{"../src/utils":20,"esprima-fb":6}],27:[function(_dereq_,module,exports){
+},{"../src/utils":21,"esprima-fb":8}],28:[function(_dereq_,module,exports){
 /**
  * Copyright 2013 Facebook, Inc.
  *
@@ -12401,7 +12429,90 @@ exports.visitorList = [
   visitTaggedTemplateExpression
 ];
 
-},{"../src/utils":20,"esprima-fb":6}],28:[function(_dereq_,module,exports){
+},{"../src/utils":21,"esprima-fb":8}],29:[function(_dereq_,module,exports){
+/**
+ * Copyright 2013 Facebook, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*jslint node:true*/
+
+/**
+ * Desugars ES7 rest properties into ES5 object iteration.
+ */
+
+var Syntax = _dereq_('esprima-fb').Syntax;
+var utils = _dereq_('../src/utils');
+
+// TODO: This is a pretty massive helper, it should only be defined once, in the
+// transform's runtime environment. We don't currently have a runtime though.
+var restFunction =
+  '(function(source, exclusion) {' +
+    'var rest = {};' +
+    'var hasOwn = Object.prototype.hasOwnProperty;' +
+    'if (source == null) {' +
+      'throw new TypeError();' +
+    '}' +
+    'for (var key in source) {' +
+      'if (hasOwn.call(source, key) && !hasOwn.call(exclusion, key)) {' +
+        'rest[key] = source[key];' +
+      '}' +
+    '}' +
+    'return rest;' +
+  '})';
+
+function getPropertyNames(properties) {
+  var names = [];
+  for (var i = 0; i < properties.length; i++) {
+    var property = properties[i];
+    if (property.type === Syntax.SpreadProperty) {
+      continue;
+    }
+    if (property.type === Syntax.Identifier) {
+      names.push(property.name);
+    } else {
+      names.push(property.key.name);
+    }
+  }
+  return names;
+}
+
+function getRestFunctionCall(source, exclusion) {
+  return restFunction + '(' + source + ',' + exclusion + ')';
+}
+
+function getSimpleShallowCopy(accessorExpression) {
+  // This could be faster with 'Object.assign({}, ' + accessorExpression + ')'
+  // but to unify code paths and avoid a ES6 dependency we use the same
+  // helper as for the exclusion case.
+  return getRestFunctionCall(accessorExpression, '{}');
+}
+
+function renderRestExpression(accessorExpression, excludedProperties) {
+  var excludedNames = getPropertyNames(excludedProperties);
+  if (!excludedNames.length) {
+    return getSimpleShallowCopy(accessorExpression);
+  }
+  return getRestFunctionCall(
+    accessorExpression,
+    '{' + excludedNames.join(':1,') + ':1}'
+  );
+}
+
+exports.renderRestExpression = renderRestExpression;
+
+},{"../src/utils":21,"esprima-fb":8}],30:[function(_dereq_,module,exports){
 /**
  * Copyright 2013-2014 Facebook, Inc.
  *
@@ -12446,15 +12557,16 @@ var supportsAccessors = Object.prototype.hasOwnProperty('__defineGetter__');
  */
 function transformReact(source, options) {
   // TODO: just use react-tools
+  options = options || {};
   var visitorList;
-  if (options && options.harmony) {
+  if (options.harmony) {
     visitorList = visitors.getAllVisitors();
   } else {
     visitorList = visitors.transformVisitors.react;
   }
 
   return transform(visitorList, source, {
-    sourceMap: supportsAccessors
+    sourceMap: supportsAccessors && options.sourceMap
   });
 }
 
@@ -12602,7 +12714,7 @@ function run(code, url, options) {
  * @param {function} callback Function to call with the content of url
  * @internal
  */
-function load(url, callback) {
+function load(url, successCallback, errorCallback) {
   var xhr;
   xhr = window.ActiveXObject ? new window.ActiveXObject('Microsoft.XMLHTTP')
                              : new XMLHttpRequest();
@@ -12616,8 +12728,9 @@ function load(url, callback) {
   xhr.onreadystatechange = function() {
     if (xhr.readyState === 4) {
       if (xhr.status === 0 || xhr.status === 200) {
-        callback(xhr.responseText, url);
+        successCallback(xhr.responseText);
       } else {
+        errorCallback();
         throw new Error("Could not load " + url);
       }
     }
@@ -12634,10 +12747,8 @@ function load(url, callback) {
  * @internal
  */
 function loadScripts(scripts) {
-  var result = scripts.map(function() {
-    return false;
-  });
-  var count = result.length;
+  var result = [];
+  var count = scripts.length;
 
   function check() {
     var script, i;
@@ -12645,43 +12756,59 @@ function loadScripts(scripts) {
     for (i = 0; i < count; i++) {
       script = result[i];
 
-      if (script && !script.executed) {
-        run(script.content, script.url, script.options);
+      if (script.loaded && !script.executed) {
         script.executed = true;
-      } else if (!script) {
+        run(script.content, script.url, script.options);
+      } else if (!script.loaded && !script.error && !script.async) {
         break;
       }
     }
   }
 
   scripts.forEach(function(script, i) {
-    var options;
-    if (script.type.indexOf('harmony=true') !== -1) {
-      options = {
-        harmony: true
-      };
+    var options = {
+      sourceMap: true
+    };
+    if (/;harmony=true(;|$)/.test(script.type)) {
+      options.harmony = true
     }
 
+    // script.async is always true for non-javascript script tags
+    var async = script.hasAttribute('async');
+
     if (script.src) {
-      load(script.src, function(content, url) {
-        result[i] = {
-          executed: false,
-          content: content,
-          url: url,
-          options: options
-        };
+      result[i] = {
+        async: async,
+        error: false,
+        executed: false,
+        content: null,
+        loaded: false,
+        url: script.src,
+        options: options
+      };
+
+      load(script.src, function(content) {
+        result[i].loaded = true;
+        result[i].content = content;
+        check();
+      }, function() {
+        result[i].error = true;
         check();
       });
     } else {
       result[i] = {
+        async: async,
+        error: false,
         executed: false,
         content: script.innerHTML,
+        loaded: true,
         url: null,
         options: options
       };
-      check();
     }
   });
+
+  check();
 }
 
 /**
@@ -12695,7 +12822,7 @@ function runScripts() {
   // Array.prototype.slice cannot be used on NodeList on IE8
   var jsxScripts = [];
   for (var i = 0; i < scripts.length; i++) {
-    if (scripts.item(i).type.indexOf('text/jsx') !== -1) {
+    if (/^text\/jsx(;|$)/.test(scripts.item(i).type)) {
       jsxScripts.push(scripts.item(i));
     }
   }
@@ -12727,7 +12854,7 @@ module.exports = {
   exec: exec
 };
 
-},{"./fbtransform/visitors":32,"buffer":1,"jstransform":19,"jstransform/src/docblock":18}],29:[function(_dereq_,module,exports){
+},{"./fbtransform/visitors":34,"buffer":1,"jstransform":20,"jstransform/src/docblock":19}],31:[function(_dereq_,module,exports){
 /**
  * Copyright 2013-2014 Facebook, Inc.
  *
@@ -12799,6 +12926,13 @@ function visitReactTag(traverse, object, path, state) {
     throw new Error('Namespace tags are not supported. ReactJSX is not XML.');
   }
 
+  var isReact = jsxObjIdent !== 'JSXDOM';
+
+  // We assume that the React runtime is already in scope
+  if (isReact) {
+    utils.append('React.createElement(', state);
+  }
+
   // Only identifiers can be fallback tags or need quoting. We don't need to
   // handle quoting for other types.
   var didAddTag = false;
@@ -12836,7 +12970,11 @@ function visitReactTag(traverse, object, path, state) {
     utils.catchup(nameObject.range[1], state);
   }
 
-  utils.append('(', state);
+  if (isReact) {
+    utils.append(', ', state);
+  } else {
+    utils.append('(', state);
+  }
 
   var hasAttributes = attributesObject.length;
 
@@ -13008,16 +13146,14 @@ function visitReactTag(traverse, object, path, state) {
 }
 
 visitReactTag.test = function(object, path, state) {
-  // only run react when react @jsx namespace is specified in docblock
-  var jsx = utils.getDocblock(state).jsx;
-  return object.type === Syntax.XJSElement && jsx && jsx.length;
+  return object.type === Syntax.XJSElement;
 };
 
 exports.visitorList = [
   visitReactTag
 ];
 
-},{"./xjs":31,"esprima-fb":6,"jstransform/src/utils":20}],30:[function(_dereq_,module,exports){
+},{"./xjs":33,"esprima-fb":6,"jstransform/src/utils":21}],32:[function(_dereq_,module,exports){
 /**
  * Copyright 2013-2014 Facebook, Inc.
  *
@@ -13107,26 +13243,19 @@ function visitReactDisplayName(traverse, object, path, state) {
   }
 }
 
-/**
- * Will only run on @jsx files for now.
- */
 visitReactDisplayName.test = function(object, path, state) {
-  if (utils.getDocblock(state).jsx) {
-    return (
-      object.type === Syntax.AssignmentExpression ||
-      object.type === Syntax.Property ||
-      object.type === Syntax.VariableDeclarator
-    );
-  } else {
-    return false;
-  }
+  return (
+    object.type === Syntax.AssignmentExpression ||
+    object.type === Syntax.Property ||
+    object.type === Syntax.VariableDeclarator
+  );
 };
 
 exports.visitorList = [
   visitReactDisplayName
 ];
 
-},{"esprima-fb":6,"jstransform/src/utils":20}],31:[function(_dereq_,module,exports){
+},{"esprima-fb":6,"jstransform/src/utils":21}],33:[function(_dereq_,module,exports){
 /**
  * Copyright 2013-2014 Facebook, Inc.
  *
@@ -13381,7 +13510,7 @@ exports.renderXJSLiteral = renderXJSLiteral;
 exports.quoteAttrName = quoteAttrName;
 exports.trimLeft = trimLeft;
 
-},{"esprima-fb":6,"jstransform/src/utils":20}],32:[function(_dereq_,module,exports){
+},{"esprima-fb":6,"jstransform/src/utils":21}],34:[function(_dereq_,module,exports){
 /*global exports:true*/
 var es6ArrowFunctions = _dereq_('jstransform/visitors/es6-arrow-function-visitors');
 var es6Classes = _dereq_('jstransform/visitors/es6-class-visitors');
@@ -13441,6 +13570,6 @@ function getAllVisitors(excludes) {
 exports.getAllVisitors = getAllVisitors;
 exports.transformVisitors = transformVisitors;
 
-},{"./transforms/react":29,"./transforms/reactDisplayName":30,"jstransform/visitors/es6-arrow-function-visitors":21,"jstransform/visitors/es6-class-visitors":22,"jstransform/visitors/es6-destructuring-visitors":23,"jstransform/visitors/es6-object-concise-method-visitors":24,"jstransform/visitors/es6-object-short-notation-visitors":25,"jstransform/visitors/es6-rest-param-visitors":26,"jstransform/visitors/es6-template-visitors":27}]},{},[28])
-(28)
+},{"./transforms/react":31,"./transforms/reactDisplayName":32,"jstransform/visitors/es6-arrow-function-visitors":22,"jstransform/visitors/es6-class-visitors":23,"jstransform/visitors/es6-destructuring-visitors":24,"jstransform/visitors/es6-object-concise-method-visitors":25,"jstransform/visitors/es6-object-short-notation-visitors":26,"jstransform/visitors/es6-rest-param-visitors":27,"jstransform/visitors/es6-template-visitors":28}]},{},[30])
+(30)
 });
